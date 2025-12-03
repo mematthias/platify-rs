@@ -1,6 +1,6 @@
 ﻿[package]
 name = "platify"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 license = "MIT"
 description = "Streamline cross-platform Rust development with declarative attribute macros."
