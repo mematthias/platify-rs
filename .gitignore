@@ -1,10 +1,12 @@
 ﻿*
 !*/
 
+!/.github/**
 !/src/**
 !/tests/**
 
 !/.gitignore
+!/.rusty-hook.toml
 !/Cargo.lock
 !/Cargo.toml
 !/LICENSE
