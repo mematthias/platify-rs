@@ -11,20 +11,20 @@ use std::cell::RefCell;
 struct SimpleMath;
 
 impl SimpleMath {
-	// Default: include(all)
-	#[sys_function]
-	pub fn add(&self, a: i32, b: i32) -> i32;
+    // Default: include(all)
+    #[sys_function]
+    pub fn add(&self, a: i32, b: i32) -> i32;
 
-	// The implementation to which the call is delegated
-	fn add_impl(&self, a: i32, b: i32) -> i32 {
-		a + b
-	}
+    // The implementation to which the call is delegated
+    fn add_impl(&self, a: i32, b: i32) -> i32 {
+        a + b
+    }
 }
 
 #[test]
 fn test_basic_dispatch() {
-	let math = SimpleMath;
-	assert_eq!(math.add(10, 20), 30);
+    let math = SimpleMath;
+    assert_eq!(math.add(10, 20), 30);
 }
 
 // =========================================================================
@@ -34,31 +34,31 @@ fn test_basic_dispatch() {
 // =========================================================================
 
 mod visibility_check {
-	use platify::sys_function;
+    use platify::sys_function;
 
-	pub struct PublicWorker;
+    pub struct PublicWorker;
 
-	impl PublicWorker {
-		// This method is marked 'pub'.
-		// The macro must ensure the generated wrapper is also 'pub'.
-		#[sys_function]
-		pub fn do_public_work(&self) -> bool;
+    impl PublicWorker {
+        // This method is marked 'pub'.
+        // The macro must ensure the generated wrapper is also 'pub'.
+        #[sys_function]
+        pub fn do_public_work(&self) -> bool;
 
-		// The implementation can remain private (default), as it is only
-		// called by the wrapper (which is inside the same impl block).
-		fn do_public_work_impl(&self) -> bool {
-			true
-		}
-	}
+        // The implementation can remain private (default), as it is only
+        // called by the wrapper (which is inside the same impl block).
+        fn do_public_work_impl(&self) -> bool {
+            true
+        }
+    }
 }
 
 #[test]
 fn test_visibility_is_preserved() {
-	let worker = visibility_check::PublicWorker;
+    let worker = visibility_check::PublicWorker;
 
-	// Attempt to call the method from OUTSIDE the module.
-	// This will only compile if the generated code preserved the `pub` keyword.
-	assert!(worker.do_public_work());
+    // Attempt to call the method from OUTSIDE the module.
+    // This will only compile if the generated code preserved the `pub` keyword.
+    assert!(worker.do_public_work());
 }
 
 // =========================================================================
@@ -69,24 +69,24 @@ fn test_visibility_is_preserved() {
 struct StateProcessor;
 
 impl StateProcessor {
-	// Here we test:
-	// 1. Arguments without explicit names in the pattern (handled by default).
-	// 2. `mut` arguments (The macro must remove `mut` when forwarding).
-	#[sys_function]
-	#[expect(unused_mut, reason = "Test refers to this 'mut'")]
-	fn process(&self, mut value: i32, factor: i32) -> i32;
+    // Here we test:
+    // 1. Arguments without explicit names in the pattern (handled by default).
+    // 2. `mut` arguments (The macro must remove `mut` when forwarding).
+    #[sys_function]
+    #[expect(unused_mut, reason = "Test refers to this 'mut'")]
+    fn process(&self, mut value: i32, factor: i32) -> i32;
 
-	fn process_impl(&self, value: i32, factor: i32) -> i32 {
-		value * factor
-	}
+    fn process_impl(&self, value: i32, factor: i32) -> i32 {
+        value * factor
+    }
 }
 
 #[test]
 fn test_argument_cleaning() {
-	let processor = StateProcessor;
-	// If the macro generated `process_impl(mut value, factor)`,
-	// this test would fail to compile due to syntax errors.
-	assert_eq!(processor.process(10, 2), 20);
+    let processor = StateProcessor;
+    // If the macro generated `process_impl(mut value, factor)`,
+    // this test would fail to compile due to syntax errors.
+    assert_eq!(processor.process(10, 2), 20);
 }
 
 // =========================================================================
@@ -97,19 +97,19 @@ fn test_argument_cleaning() {
 struct GenericHandler;
 
 impl GenericHandler {
-	#[sys_function]
-	fn wrap<T: Clone>(&self, item: T) -> (T, T);
+    #[sys_function]
+    fn wrap<T: Clone>(&self, item: T) -> (T, T);
 
-	fn wrap_impl<T: Clone>(&self, item: T) -> (T, T) {
-		(item.clone(), item)
-	}
+    fn wrap_impl<T: Clone>(&self, item: T) -> (T, T) {
+        (item.clone(), item)
+    }
 }
 
 #[test]
 fn test_generics() {
-	let handler = GenericHandler;
-	let result = handler.wrap("hello");
-	assert_eq!(result, ("hello", "hello"));
+    let handler = GenericHandler;
+    let result = handler.wrap("hello");
+    assert_eq!(result, ("hello", "hello"));
 }
 
 // =========================================================================
@@ -120,20 +120,20 @@ fn test_generics() {
 struct SideEffect;
 
 impl SideEffect {
-	#[sys_function]
-	fn trigger(&self, counter: &RefCell<i32>);
+    #[sys_function]
+    fn trigger(&self, counter: &RefCell<i32>);
 
-	fn trigger_impl(&self, counter: &RefCell<i32>) {
-		*counter.borrow_mut() += 1;
-	}
+    fn trigger_impl(&self, counter: &RefCell<i32>) {
+        *counter.borrow_mut() += 1;
+    }
 }
 
 #[test]
 fn test_unit_return() {
-	let effect = SideEffect;
-	let counter = RefCell::new(0);
-	effect.trigger(&counter);
-	assert_eq!(*counter.borrow(), 1);
+    let effect = SideEffect;
+    let counter = RefCell::new(0);
+    effect.trigger(&counter);
+    assert_eq!(*counter.borrow(), 1);
 }
 
 // =========================================================================
@@ -144,18 +144,18 @@ fn test_unit_return() {
 struct AsyncWorker;
 
 impl AsyncWorker {
-	#[sys_function]
-	async fn fetch(&self) -> u8;
+    #[sys_function]
+    async fn fetch(&self) -> u8;
 
-	async fn fetch_impl(&self) -> u8 {
-		42
-	}
+    async fn fetch_impl(&self) -> u8 {
+        42
+    }
 }
 
 #[tokio::test]
 async fn test_async() {
-	let worker = AsyncWorker;
-	assert_eq!(worker.fetch().await, 42);
+    let worker = AsyncWorker;
+    assert_eq!(worker.fetch().await, 42);
 }
 
 // =========================================================================
@@ -168,28 +168,28 @@ struct NativeHandle;
 
 #[test]
 fn test_struct_aliases() {
-	let handle = NativeHandle;
+    let handle = NativeHandle;
 
-	// This test is tricky because we can only check the alias
-	// for the operating system the test is currently running on.
+    // This test is tricky because we can only check the alias
+    // for the operating system the test is currently running on.
 
-	#[cfg(target_os = "linux")]
-	{
-		// On Linux, this type alias must exist:
-		let _alias: NativeHandleLinux = handle;
-	}
+    #[cfg(target_os = "linux")]
+    {
+        // On Linux, this type alias must exist:
+        let _alias: NativeHandleLinux = handle;
+    }
 
-	#[cfg(target_os = "macos")]
-	{
-		// On macOS, this type alias must exist:
-		let _alias: NativeHandleMacOS = handle;
-	}
+    #[cfg(target_os = "macos")]
+    {
+        // On macOS, this type alias must exist:
+        let _alias: NativeHandleMacOS = handle;
+    }
 
-	#[cfg(target_os = "windows")]
-	{
-		// On Windows, this type alias must exist:
-		let _alias: NativeHandleWindows = handle;
-	}
+    #[cfg(target_os = "windows")]
+    {
+        // On Windows, this type alias must exist:
+        let _alias: NativeHandleWindows = handle;
+    }
 }
 
 // =========================================================================
@@ -200,25 +200,25 @@ fn test_struct_aliases() {
 struct OsSpecific;
 
 impl OsSpecific {
-	// Exists everywhere EXCEPT on Windows.
-	#[sys_function(exclude(windows))]
-	fn unix_only(&self) -> bool;
+    // Exists everywhere EXCEPT on Windows.
+    #[sys_function(exclude(windows))]
+    fn unix_only(&self) -> bool;
 
-	#[allow(dead_code)]
-	fn unix_only_impl(&self) -> bool {
-		true
-	}
+    #[allow(dead_code)]
+    fn unix_only_impl(&self) -> bool {
+        true
+    }
 }
 
 #[test]
 fn test_exclusion() {
-	let _os = OsSpecific;
+    let _os = OsSpecific;
 
-	#[cfg(not(windows))]
-	{
-		assert!(_os.unix_only());
-	}
+    #[cfg(not(windows))]
+    {
+        assert!(_os.unix_only());
+    }
 
-	// On Windows, the method `unix_only` does not exist.
-	// Calling it would result in a compile error, which proves the macro works.
+    // On Windows, the method `unix_only` does not exist.
+    // Calling it would result in a compile error, which proves the macro works.
 }
