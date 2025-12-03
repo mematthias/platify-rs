@@ -1,9 +1,10 @@
-﻿#![deny(deprecated)]
+#![deny(deprecated)]
 
 use platify::{sys_function, sys_struct};
+use std::cell::RefCell;
 
 // =========================================================================
-// TEST 1: Basics & Dispatching
+// TEST: Basics & Dispatching
 // Checks if the method call is correctly forwarded to the _impl method.
 // =========================================================================
 
@@ -27,7 +28,41 @@ fn test_basic_dispatch() {
 }
 
 // =========================================================================
-// TEST 2: Argument Forwarding & Mutability
+// TEST: Visibility Propagation
+// Checks if visibility modifiers (like `pub`) are correctly preserved.
+// We define the struct inside a module and try to access it from outside.
+// =========================================================================
+
+mod visibility_check {
+	use platify::sys_function;
+
+	pub struct PublicWorker;
+
+	impl PublicWorker {
+		// This method is marked 'pub'.
+		// The macro must ensure the generated wrapper is also 'pub'.
+		#[sys_function]
+		pub fn do_public_work(&self) -> bool;
+
+		// The implementation can remain private (default), as it is only
+		// called by the wrapper (which is inside the same impl block).
+		fn do_public_work_impl(&self) -> bool {
+			true
+		}
+	}
+}
+
+#[test]
+fn test_visibility_is_preserved() {
+	let worker = visibility_check::PublicWorker;
+
+	// Attempt to call the method from OUTSIDE the module.
+	// This will only compile if the generated code preserved the `pub` keyword.
+	assert!(worker.do_public_work());
+}
+
+// =========================================================================
+// TEST: Argument Forwarding & Mutability
 // Checks if 'mut' is correctly stripped from arguments during the forwarding call.
 // =========================================================================
 
@@ -55,7 +90,7 @@ fn test_argument_cleaning() {
 }
 
 // =========================================================================
-// TEST 3: Generics
+// TEST: Generics
 // Checks if generics in function signatures are handled correctly.
 // =========================================================================
 
@@ -78,12 +113,11 @@ fn test_generics() {
 }
 
 // =========================================================================
-// TEST 4: Return Types (Unit vs. Value)
+// TEST: Return Types (Unit vs. Value)
 // Checks if functions without a return value (Unit) correctly get a trailing semicolon.
 // =========================================================================
 
 struct SideEffect;
-use std::cell::RefCell;
 
 impl SideEffect {
 	#[sys_function]
@@ -103,7 +137,7 @@ fn test_unit_return() {
 }
 
 // =========================================================================
-// TEST 5: Async Support
+// TEST: Async Support
 // Checks if async/.await is correctly inserted into the generated code.
 // =========================================================================
 
@@ -125,7 +159,7 @@ async fn test_async() {
 }
 
 // =========================================================================
-// TEST 6: Struct Aliases
+// TEST: Struct Aliases
 // Checks if the aliases are created correctly for the CURRENT OS.
 // =========================================================================
 
@@ -159,7 +193,7 @@ fn test_struct_aliases() {
 }
 
 // =========================================================================
-// TEST 7: Complex Exclusion Logic
+// TEST: Complex Exclusion Logic
 // Checks if the exclusion logic works (compile-time check via cfg).
 // =========================================================================
 

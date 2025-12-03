@@ -1,4 +1,4 @@
-﻿//! # Platify
+//! # Platify
 //!
 //! **Platify** streamlines the development of cross-platform Rust applications by reducing the boilerplate
 //! associated with `#[cfg(...)]` attributes.
@@ -94,13 +94,13 @@
 
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
-use quote::{ToTokens as _, format_ident, quote};
+use quote::{format_ident, quote, ToTokens as _};
 use std::collections::{BTreeSet, HashSet};
 use syn::parse::{Parse, ParseStream};
 use syn::spanned::Spanned as _;
 use syn::{
-	Error, FnArg, ForeignItemFn, GenericParam, ItemStruct, Pat, PatType, ReturnType, Signature,
-	parenthesized, parse_macro_input, token,
+	parenthesized, parse_macro_input, token, Error, FnArg, ForeignItemFn, GenericParam, ItemStruct,
+	Pat, PatType, ReturnType, Signature,
 };
 
 /// Generates a platform-dependent method implementation.
@@ -132,7 +132,7 @@ pub fn sys_function(attr: TokenStream, item: TokenStream) -> TokenStream {
 
 	let ForeignItemFn {
 		attrs,
-		vis: _,
+		vis,
 		sig,
 		semi_token: _,
 	} = parse_macro_input!(item);
@@ -199,7 +199,7 @@ pub fn sys_function(attr: TokenStream, item: TokenStream) -> TokenStream {
 	let result = quote! {
 		#(#attrs)*
 		#cfg_attr
-		#sig {
+		#vis #sig {
 			#body
 		}
 	};
