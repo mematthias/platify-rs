@@ -1,5 +1,11 @@
 ﻿# Platify
 
+[![Crates.io](https://img.shields.io/crates/v/platify.svg)](https://crates.io/crates/platify)
+[![Documentation](https://docs.rs/platify/badge.svg)](https://docs.rs/platify)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![GitHub Repo](https://img.shields.io/badge/GitHub-Repository-black?logo=github)](https://github.com/mematthias/platify-rs)
+[![Test Status](https://github.com/mematthias/platify-rs/actions/workflows/rust-check.yml/badge.svg)](https://github.com/mematthias/platify-rs/actions/workflows/rust-check.yml)
+
 **Platify** streamlines cross-platform Rust development by removing the boilerplate associated with `#[cfg(...)]` attributes.
 
 Instead of cluttering your code with repetitive checks and manual dispatch logic, Platify allows you to define platform-specific behavior using a clean, declarative attribute syntax.
@@ -17,7 +23,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-platify = "0.1.0"
+platify = "0.1.1"
 ```
 
 Or run:
