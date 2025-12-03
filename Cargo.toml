@@ -3,6 +3,8 @@ name = "platify"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
+description = "Streamline cross-platform Rust development with declarative attribute macros."
+repository = "https://github.com/mematthias/platify-rs"
 readme = true
 rust-version = "1.68.0"
 
