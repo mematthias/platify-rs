@@ -1,6 +1,6 @@
 ﻿[package]
 name = "platify"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2021"
 license = "MIT"
 description = "Streamline cross-platform Rust development with declarative attribute macros."
@@ -11,8 +11,11 @@ rust-version = "1.68.0"
 [lib]
 proc-macro = true
 
+[features]
+default = ["warn-platform-struct-usage"]
+warn-platform-struct-usage = []
+
 [dev-dependencies]
-rusty-hook = { version = "0.11.2", default-features = false, features = [] }
 tokio = { version = "1.48.0", default-features = false, features = ["macros", "rt"] }
 
 [dependencies]

@@ -1,5 +1,3 @@
-#![deny(deprecated)]
-
 use platify::{sys_function, sys_struct};
 use std::cell::RefCell;
 
@@ -73,7 +71,7 @@ impl StateProcessor {
     // 1. Arguments without explicit names in the pattern (handled by default).
     // 2. `mut` arguments (The macro must remove `mut` when forwarding).
     #[sys_function]
-    #[expect(unused_mut, reason = "Test refers to this 'mut'")]
+    #[allow(unused_mut)]
     fn process(&self, mut value: i32, factor: i32) -> i32;
 
     fn process_impl(&self, value: i32, factor: i32) -> i32 {
@@ -176,18 +174,21 @@ fn test_struct_aliases() {
     #[cfg(target_os = "linux")]
     {
         // On Linux, this type alias must exist:
+        #[allow(deprecated)]
         let _alias: NativeHandleLinux = handle;
     }
 
     #[cfg(target_os = "macos")]
     {
         // On macOS, this type alias must exist:
+        #[allow(deprecated)]
         let _alias: NativeHandleMacOS = handle;
     }
 
     #[cfg(target_os = "windows")]
     {
         // On Windows, this type alias must exist:
+        #[allow(deprecated)]
         let _alias: NativeHandleWindows = handle;
     }
 }
@@ -221,4 +222,76 @@ fn test_exclusion() {
 
     // On Windows, the method `unix_only` does not exist.
     // Calling it would result in a compile error, which proves the macro works.
+}
+
+// =========================================================================
+// TEST: Trait Assertions with Generics
+// Verifies that 'traits(...)' works correctly with generic structs.
+// This ensures the macro generates: fn _check<T: Clone>() { ... }
+// instead of instantiating with dummy types.
+// =========================================================================
+
+#[sys_struct(traits(Send, Sync))]
+struct GenericWrapper<T: Clone + Send + Sync> {
+    data: T,
+}
+
+#[test]
+fn test_generic_trait_assertion() {
+    // This test is primarily a compile-time check.
+    // If the macro generates invalid code (e.g., checking GenericWrapper<bool>),
+    // compilation would fail for types that don't match the hardcoded dummy.
+    let _wrapper = GenericWrapper { data: 42 };
+}
+
+#[sys_struct(traits(Send))]
+struct UnsizedWrapper<T: ?Sized + Send> {
+    data: Box<T>,
+}
+
+// =========================================================================
+// TEST: Unsafe Support
+// Checks if 'unsafe' functions are correctly wrapped in 'unsafe' blocks.
+// =========================================================================
+
+struct DangerZone;
+
+impl DangerZone {
+    #[sys_function]
+    unsafe fn explode(&self) -> bool;
+
+    unsafe fn explode_impl(&self) -> bool {
+        true
+    }
+}
+
+#[test]
+fn test_unsafe() {
+    let danger = DangerZone;
+    // We must call it inside an unsafe block, confirming the signature kept 'unsafe'
+    let result = unsafe { danger.explode() };
+    assert!(result);
+}
+
+// =========================================================================
+// TEST: Lifetimes & References
+// Checks if arguments passed by reference are forwarded correctly.
+// =========================================================================
+
+struct StringParser;
+
+impl StringParser {
+    #[sys_function]
+    fn parse<'a>(&self, input: &'a str) -> &'a str;
+
+    fn parse_impl<'a>(&self, input: &'a str) -> &'a str {
+        input.trim()
+    }
+}
+
+#[test]
+fn test_lifetimes() {
+    let parser = StringParser;
+    let data = "  hello  ";
+    assert_eq!(parser.parse(data), "hello");
 }

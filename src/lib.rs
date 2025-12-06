@@ -8,8 +8,10 @@
 //!
 //! ## Features
 //!
-//! *   **`#[sys_function]`**: Automatically dispatches method calls to platform-specific implementations based on the OS.
-//! *   **`#[sys_struct]`**: Generates platform-specific type aliases for structs (e.g., `MyStructLinux`, `MyStructWindows`).
+//! *   **`#[sys_function]`**: Automatically dispatches method calls to platform-specific implementations (e.g., `fn run()` calls `Self::run_impl()`).
+//! *   **`#[sys_trait_function]`**: Applies platform configuration to trait method definitions.
+//! *   **`#[sys_struct]`**: Generates platform-specific type aliases (e.g., `MyStruct` -> `MyStructLinux`) and optionally enforces trait bounds (e.g., `Send + Sync`) at compile time.
+//! *   **`#[platform_mod]`**: Declares platform-dependent modules backed by OS-specific files, with strict visibility control.
 //! *   **Flexible Logic**: Supports explicit inclusion (`include`) and exclusion (`exclude`) of platforms.
 //! *   **Platform Groups**: Includes helper keywords like `posix` (Linux + macOS) or `all`.
 //!
@@ -57,7 +59,7 @@
 //!     pub fn posix_magic(&self);
 //! }
 //!
-//! // You then implement the specific logic:
+//! // You then implement the specific logic for each platform:
 //! impl SystemManager {
 //!     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 //!     fn reboot_impl(&self) -> Result<(), String> {
@@ -78,30 +80,104 @@
 //!
 //! ### 2. Using `#[sys_struct]`
 //!
-//! This creates handy type aliases for platform-specific builds.
+//! This creates handy type aliases for platform-specific builds and allows verifying trait implementations.
 //!
 //! ```rust
 //! # use platify::sys_struct;
-//! #[sys_struct(include(windows))]
+//! // 1. Generates `HandleWindows` alias on Windows.
+//! // 2. Asserts at compile time that `Handle` implements `Send` and `Sync`.
+//! #[sys_struct(traits(Send, Sync), include(windows))]
 //! pub struct Handle {
 //!     handle: u64,
 //! }
 //!
-//! // Generates:
+//! // Generated code roughly looks like:
+//! //
 //! // #[cfg(target_os = "windows")]
 //! // pub type HandleWindows = Handle;
+//! //
+//! // #[cfg(target_os = "windows")]
+//! // const _: () = {
+//! //     fn _assert_traits<T: Send + Sync + ?Sized>() {}
+//! //     fn _check() { _assert_traits::<Handle>(); }
+//! // };
+//! ```
+//!
+//! ### 3. Using `#[sys_trait_function]`
+//!
+//! This allows defining methods in a trait that only exist on specific platforms.
+//!
+//! ```rust
+//! # use platify::sys_trait_function;
+//! trait DesktopEnv {
+//!     /// Only available on Linux
+//!     #[sys_trait_function(include(linux))]
+//!     fn get_wm_name(&self) -> String;
+//! }
+//! ```
+//!
+//! ### 4. Using `#[platform_mod]`
+//!
+//! This creates module aliases backed by specific files (e.g., `linux.rs`, `windows.rs`).
+//!
+//! **Note on Visibility:** The actual platform module (e.g., `mod linux;`) inherits the visibility you declare (`pub`), making it accessible to consumers.
+//!                         However, the generic alias (`mod driver;`) is generated as a **private** use-statement to be used internally.
+//!
+//! ```rust,ignore
+//! // Assumes existence of `src/linux.rs` and `src/windows.rs`
+//!
+//! #[platform_mod(include(linux, windows))]
+//! pub mod driver;
+//!
+//! // --- Internal Usage (Platform Agnostic) ---
+//! // Inside this file, we use the private alias `driver`.
+//! fn init() {
+//!     let device = driver::Device::new();
+//! }
+//! ```
+//!
+//! **External Consumer Usage:**
+//!
+//! ```rust,ignore
+//! // Users of your crate must explicitly choose the platform module.
+//! // 'driver' is not visible here.
+//! #[cfg(target_os = "linux")]
+//! use my_crate::linux::Device;
 //! ```
 
 use proc_macro::TokenStream;
-use proc_macro2::{Span, TokenStream as TokenStream2};
+use proc_macro2::{Span as Span2, TokenStream as TokenStream2};
 use quote::{format_ident, quote, ToTokens as _};
 use std::collections::{BTreeSet, HashSet};
 use syn::parse::{Parse, ParseStream};
 use syn::spanned::Spanned as _;
 use syn::{
-    parenthesized, parse_macro_input, token, Error, FnArg, ForeignItemFn, GenericParam, ItemStruct,
-    Pat, PatType, ReturnType, Signature,
+    parenthesized, parse, parse_macro_input, token, Attribute, Error, FnArg, ForeignItemFn,
+    GenericParam, ItemFn, ItemMod, ItemStruct, ItemUse, Pat, PatType, ReturnType, Signature,
+    TraitItemFn, UseTree, Visibility,
 };
+
+/// Applies platform configuration to trait method definitions.
+///
+/// Use this inside a `trait` definition to limit methods to specific platforms.
+///
+/// # Options
+///
+/// - `include(...)`: Whitelist of platforms. Options: `linux`, `macos`, `windows`, `all`, `posix`.
+/// - `exclude(...)`: Blacklist of platforms. Removes them from the included set.
+#[proc_macro_attribute]
+pub fn sys_trait_function(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let attr = parse_macro_input!(attr as AttrOptions);
+    let cfg_attr = attr.convert_to_cfg_attr();
+
+    let trait_fn = parse_macro_input!(item as TraitItemFn);
+
+    quote! {
+        #cfg_attr
+        #trait_fn
+    }
+    .into()
+}
 
 /// Generates a platform-dependent method implementation.
 ///
@@ -130,12 +206,28 @@ pub fn sys_function(attr: TokenStream, item: TokenStream) -> TokenStream {
     let attr = parse_macro_input!(attr as AttrOptions);
     let cfg_attr = attr.convert_to_cfg_attr();
 
+    let struct_info = match parse::<ForeignItemFn>(item.clone()) {
+        Ok(foreign_item_fn) => foreign_item_fn,
+        Err(_) => {
+            return match parse::<ItemFn>(item) {
+                Ok(item_fn) => {
+                    quote! {
+                        #cfg_attr
+                        #item_fn
+                    }
+                }
+                Err(err) => err.to_compile_error(),
+            }
+            .into()
+        }
+    };
+
     let ForeignItemFn {
         attrs,
         vis,
         sig,
         semi_token: _,
-    } = parse_macro_input!(item);
+    } = struct_info;
 
     let &Signature {
         constness: _,
@@ -166,7 +258,7 @@ pub fn sys_function(attr: TokenStream, item: TokenStream) -> TokenStream {
 		FnArg::Receiver(_) => Some(quote!(self)),
 		FnArg::Typed(PatType { ref pat, .. }) => match **pat {
 			Pat::Ident(ref pat_ident) => Some(pat_ident.ident.to_token_stream()),
-			ref other => {
+            ref other => {
 				const MSG: &str = "Complex patterns in arguments are not supported by #[sys_function]: give the argument a name";
 				param_errors.extend(Error::new(other.span(), MSG).to_compile_error());
 				None
@@ -197,8 +289,8 @@ pub fn sys_function(attr: TokenStream, item: TokenStream) -> TokenStream {
     }
 
     let result = quote! {
-        #(#attrs)*
         #cfg_attr
+        #(#attrs)*
         #vis #sig {
             #body
         }
@@ -226,11 +318,17 @@ pub fn sys_function(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// # Options
 ///
-/// Same as [`sys_function`].
+/// - `traits(...)`: Comma-separated list of traits (e.g., `Send, Sync`) to assert at compile time.
+/// - `include(...)`: Whitelist of platforms.
+/// - `exclude(...)`: Blacklist of platforms.
+///
+/// (See [`sys_function`] for more details on include/exclude logic).
 #[proc_macro_attribute]
 pub fn sys_struct(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let attr = parse_macro_input!(attr as AttrOptions);
-    let allowed_set: BTreeSet<_> = attr.allowed_set(|platform| match platform {
+    let attr = parse_macro_input!(attr as StructOptions);
+    let cfg_attr = attr.options.convert_to_cfg_attr();
+
+    let allowed_set: BTreeSet<_> = attr.options.allowed_set(|platform| match platform {
         Platform::All | Platform::Posix => unreachable!("Should have been expanded"),
         Platform::Linux => ("linux", "Linux"),
         Platform::Macos => ("macos", "MacOS"),
@@ -275,25 +373,194 @@ pub fn sys_struct(attr: TokenStream, item: TokenStream) -> TokenStream {
         );
         let doc_msg = format!("Platform-specific alias for [{ident}].");
         let alias_ident = format_ident!("{ident}{ident_postfix}");
+
+        #[cfg(feature = "warn-platform-struct-usage")]
+        let warning = {
+            let warn_msg = format!("[warn-platform-struct-usage] Platform struct is explicitly used: use '{ident}' instead");
+            quote!(#[deprecated(note = #warn_msg)])
+        };
+        #[cfg(not(feature = "warn-platform-struct-usage"))]
+        let warning = TokenStream2::new();
+
         quote! {
             #[doc = #doc_msg]
             #deprecated_attr
+            #warning
             #[cfg(target_os = #platform)]
-            #vis type #alias_ident #generics = #ident #generics_names;
+            #vis type #alias_ident #generics_names = #ident #generics_names;
         }
     });
 
+    let trait_asserts = if attr.traits.is_empty() {
+        TokenStream2::new()
+    } else {
+        let cfg_attr = attr.options.convert_to_cfg_attr();
+        let traits = attr.traits;
+
+        let separator = if traits.is_empty() {
+            TokenStream2::new()
+        } else {
+            quote!(+)
+        };
+
+        quote! {
+            #cfg_attr
+            const _: () = {
+                fn _assert_traits<T: #(#traits)+* #separator ?Sized>() {}
+                fn _check #generics() { _assert_traits::<#ident #generics_names>(); }
+            };
+        }
+    };
+
     quote! {
         #(#aliases)*
+        #cfg_attr
         #item_struct
+        #trait_asserts
     }
     .into()
+}
+
+/// Declares a platform-dependent module backed by OS-specific source files.
+///
+/// This attribute simplifies the management of platform-specific code modules. Instead of manually
+/// writing multiple `#[cfg(...)] mod ...;` blocks, you define a single logical module name.
+/// The macro expects corresponding files (e.g., `linux.rs`, `windows.rs`) to exist in the same directory.
+///
+/// # Options
+///
+/// Same as [`sys_function`]: `include(...)` and `exclude(...)` determine which platform modules are generated.
+///
+/// # Visibility Behavior
+///
+/// This macro enforces a strict separation between **internal convenience** and **external access**:
+///
+/// 1. **The Module (External):** The actual platform module (e.g., `mod linux;`) **inherits** the visibility you declared.
+///    If you write `pub mod driver;`, the generated `mod linux;` will be public.
+/// 2. **The Alias (Internal):** The logical name you specified (e.g., `driver`) is generated as a **private use-alias**.
+///
+/// **Why?** This ensures that external consumers of your crate must be explicit about the platform they are accessing
+/// (e.g., `my_crate::linux::MyStruct`), while allowing you to use the generic name (e.g., `driver::MyStruct`)
+/// conveniently within your own code.
+#[proc_macro_attribute]
+pub fn platform_mod(attr: TokenStream, item: TokenStream) -> TokenStream {
+    struct DModInfo {
+        attrs: Vec<Attribute>,
+        vis: Visibility,
+        ident: proc_macro2::Ident,
+    }
+
+    let attr = parse_macro_input!(attr as AttrOptions);
+    let allowed_set: BTreeSet<_> = attr.allowed_set(|platform| match platform {
+        Platform::All | Platform::Posix => unreachable!("Should have been expanded"),
+        Platform::Linux => "linux",
+        Platform::Macos => "macos",
+        Platform::Windows => "windows",
+    });
+
+    let mod_info = match parse::<ItemUse>(item.clone()) {
+        Ok(item_use) => {
+            let ItemUse {
+                attrs,
+                vis,
+                use_token: _,
+                leading_colon,
+                tree,
+                semi_token: _,
+            } = item_use;
+
+            if let Some(leading_colon) = leading_colon {
+                return Error::new(
+				    leading_colon.span(),
+				    "#[platform_mod] does not support absolute paths (leading `::`). Please use a local identifier"
+			    ).to_compile_error().into();
+            }
+
+            let use_ident = match tree {
+                UseTree::Name(use_name) => use_name.ident,
+                other @ (UseTree::Path(_)
+                | UseTree::Rename(_)
+                | UseTree::Glob(_)
+                | UseTree::Group(_)) => {
+                    return Error::new(
+					    other.span(),
+					    "#[platform_mod] on `use` statements only supports simple direct aliases (e.g., `use name;`)"
+				    ).to_compile_error().into();
+                }
+            };
+
+            DModInfo {
+                attrs,
+                vis,
+                ident: use_ident,
+            }
+        }
+        Err(_) => match parse::<ItemMod>(item) {
+            Ok(item_mod) => {
+                let item_mod_span = item_mod.span();
+
+                let ItemMod {
+                    attrs,
+                    vis,
+                    unsafety,
+                    mod_token: _,
+                    ident,
+                    content,
+                    semi: _,
+                } = item_mod;
+
+                if let Some(unsafety) = unsafety {
+                    return Error::new(
+                        unsafety.span(),
+                        "#[platform_mod] does not support `unsafe` modules",
+                    )
+                    .to_compile_error()
+                    .into();
+                }
+
+                if content.is_some() {
+                    return Error::new(
+					    item_mod_span,
+					    "#[platform_mod] does not support inline modules with a body `{ ... }`.\n\
+					    Please use a declaration like `mod name;` to allow swapping the file based on the platform."
+				    ).to_compile_error().into();
+                }
+
+                DModInfo { attrs, vis, ident }
+            }
+            Err(_) => {
+                return Error::new(
+				    Span2::call_site(),
+				    "#[platform_mod] expected a `mod declaration` (e.g., `mod foo;`) or a `use statement` (e.g., `use foo;`)"
+			    ).to_compile_error().into();
+            }
+        },
+    };
+
+    let DModInfo { attrs, vis, ident } = mod_info;
+
+    let mods = allowed_set.into_iter().map(|platform| {
+        let platform_ident = format_ident!("{platform}");
+
+        quote! {
+            #[cfg(target_os = #platform)]
+            #(#attrs)*
+            #vis mod #platform_ident;
+            #[cfg(target_os = #platform)]
+            #(#attrs)*
+            use #platform_ident as #ident;
+        }
+    });
+
+    quote!(#(#mods)*).into()
 }
 
 // ##################################### IMPLEMENTATION #####################################
 
 mod keywords {
     use syn::custom_keyword;
+
+    custom_keyword!(traits);
 
     custom_keyword!(exclude);
     custom_keyword!(include);
@@ -350,7 +617,7 @@ impl Parse for Platform {
 }
 
 struct AttrOptions {
-    span: Span,
+    span: Span2,
     exclude: HashSet<Platform>,
     include: HashSet<Platform>,
 }
@@ -390,7 +657,7 @@ impl AttrOptions {
 				self.span,
 				"Configuration excludes all platforms: 'include' and 'exclude' cancel each other out",
 			)
-			.to_compile_error()
+				.to_compile_error()
         } else {
             TokenStream2::new()
         };
@@ -409,44 +676,74 @@ impl AttrOptions {
 
 impl Parse for AttrOptions {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
-        let mut result = Self {
+        parse_attributes(input, false).map(|options| {
+            let StructOptions { options, traits } = options;
+            assert_eq!(traits.len(), 0, "Implementation error");
+            options
+        })
+    }
+}
+
+struct StructOptions {
+    options: AttrOptions,
+    traits: Vec<syn::Path>,
+}
+
+impl Parse for StructOptions {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        parse_attributes(input, true)
+    }
+}
+
+fn parse_attributes(input: ParseStream<'_>, allow_traits: bool) -> syn::Result<StructOptions> {
+    let mut result = StructOptions {
+        options: AttrOptions {
             span: input.span(),
             exclude: HashSet::default(),
             include: HashSet::default(),
-        };
+        },
+        traits: Vec::default(),
+    };
 
-        while !input.is_empty() {
-            let lookahead = input.lookahead1();
+    while !input.is_empty() {
+        let lookahead = input.lookahead1();
 
-            if lookahead.peek(keywords::exclude) {
-                input.parse::<keywords::exclude>()?;
+        if allow_traits && lookahead.peek(keywords::traits) {
+            input.parse::<keywords::traits>()?;
 
-                let content;
-                parenthesized!(content in input);
+            let content;
+            parenthesized!(content in input);
 
-                let platforms = content.parse_terminated(Platform::parse, token::Comma)?;
-                result.exclude.extend(platforms);
-            } else if lookahead.peek(keywords::include) {
-                input.parse::<keywords::include>()?;
+            let traits = content.parse_terminated(syn::Path::parse, token::Comma)?;
+            result.traits.extend(traits);
+        } else if lookahead.peek(keywords::exclude) {
+            input.parse::<keywords::exclude>()?;
 
-                let content;
-                parenthesized!(content in input);
+            let content;
+            parenthesized!(content in input);
 
-                let platforms = content.parse_terminated(Platform::parse, token::Comma)?;
-                result.include.extend(platforms);
-            } else {
-                return Err(lookahead.error());
-            }
+            let platforms = content.parse_terminated(Platform::parse, token::Comma)?;
+            result.options.exclude.extend(platforms);
+        } else if lookahead.peek(keywords::include) {
+            input.parse::<keywords::include>()?;
 
-            if !input.is_empty() {
-                input.parse::<token::Comma>()?;
-            }
+            let content;
+            parenthesized!(content in input);
+
+            let platforms = content.parse_terminated(Platform::parse, token::Comma)?;
+            result.options.include.extend(platforms);
+        } else {
+            return Err(lookahead.error());
         }
 
-        if result.include.is_empty() {
-            result.include.insert(Platform::All);
+        if !input.is_empty() {
+            input.parse::<token::Comma>()?;
         }
-
-        Ok(result)
     }
+
+    if result.options.include.is_empty() {
+        result.options.include.insert(Platform::All);
+    }
+
+    Ok(result)
 }
