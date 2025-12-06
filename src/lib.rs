@@ -396,6 +396,7 @@ pub fn sys_struct(attr: TokenStream, item: TokenStream) -> TokenStream {
     } else {
         let cfg_attr = attr.options.convert_to_cfg_attr();
         let traits = attr.traits;
+        let generics_where_clause = generics.where_clause.as_ref();
 
         let separator = if traits.is_empty() {
             TokenStream2::new()
@@ -403,11 +404,26 @@ pub fn sys_struct(attr: TokenStream, item: TokenStream) -> TokenStream {
             quote!(+)
         };
 
+        let generics_usages = if generics.params.is_empty() {
+            TokenStream2::new()
+        } else {
+            let generics_usages =
+                generics
+                    .params
+                    .iter()
+                    .map(|generic_param| match *generic_param {
+                        GenericParam::Lifetime(_) => quote!('_),
+                        GenericParam::Type(ref type_param) => type_param.ident.to_token_stream(),
+                        GenericParam::Const(ref const_param) => const_param.ident.to_token_stream(),
+                    });
+            quote!(<#(#generics_usages),*>)
+        };
+
         quote! {
             #cfg_attr
             const _: () = {
                 fn _assert_traits<T: #(#traits)+* #separator ?Sized>() {}
-                fn _check #generics() { _assert_traits::<#ident #generics_names>(); }
+                fn _check #generics() #generics_where_clause { _assert_traits::<#ident #generics_usages>(); }
             };
         }
     };
