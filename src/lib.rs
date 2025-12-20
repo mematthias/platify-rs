@@ -152,9 +152,9 @@ use std::collections::{BTreeSet, HashSet};
 use syn::parse::{Parse, ParseStream};
 use syn::spanned::Spanned as _;
 use syn::{
-    parenthesized, parse, parse_macro_input, token, Attribute, Error, FnArg, ForeignItemFn,
-    GenericParam, ItemFn, ItemMod, ItemStruct, ItemUse, Pat, PatType, ReturnType, Signature,
-    TraitItemFn, UseTree, Visibility,
+    parenthesized, parse, parse_macro_input, token, Attribute, ConstParam, Error, FnArg,
+    ForeignItemFn, GenericParam, ItemFn, ItemMod, ItemStruct, ItemUse, Pat, PatType, ReturnType,
+    Signature, TraitItemFn, TypeParam, UseTree, Visibility,
 };
 
 /// Applies platform configuration to trait method definitions.
@@ -328,17 +328,10 @@ pub fn sys_struct(attr: TokenStream, item: TokenStream) -> TokenStream {
     let attr = parse_macro_input!(attr as StructOptions);
     let cfg_attr = attr.options.convert_to_cfg_attr();
 
-    let allowed_set: BTreeSet<_> = attr.options.allowed_set(|platform| match platform {
-        Platform::All | Platform::Posix => unreachable!("Should have been expanded"),
-        Platform::Linux => ("linux", "Linux"),
-        Platform::Macos => ("macos", "MacOS"),
-        Platform::Windows => ("windows", "Windows"),
-    });
-
     let item_struct = parse_macro_input!(item as ItemStruct);
     let &ItemStruct {
-        ref attrs,
-        ref vis,
+        attrs: _,
+        vis: _,
         struct_token: _,
         ref ident,
         ref generics,
@@ -346,62 +339,46 @@ pub fn sys_struct(attr: TokenStream, item: TokenStream) -> TokenStream {
         semi_token: _,
     } = &item_struct;
 
-    let deprecated_attr = attrs
-        .iter()
-        .find(|next_attr| next_attr.path().is_ident("deprecated"));
-
-    let generics_names = if generics.params.is_empty() {
-        TokenStream2::new()
-    } else {
-        let generics_names = generics
-            .params
-            .iter()
-            .map(|generic_param| match *generic_param {
-                GenericParam::Lifetime(ref lifetime_param) => {
-                    lifetime_param.lifetime.to_token_stream()
-                }
-                GenericParam::Type(ref type_param) => type_param.ident.to_token_stream(),
-                GenericParam::Const(ref const_param) => const_param.ident.to_token_stream(),
-            });
-        quote!(<#(#generics_names),*>)
-    };
-
-    let aliases = allowed_set.into_iter().map(|(platform, ident_postfix)| {
-        let deprecated_attr = deprecated_attr.map_or_else(
-            TokenStream2::new,
-            |deprecated_attr| quote!(#deprecated_attr),
-        );
-        let doc_msg = format!("Platform-specific alias for [{ident}].");
-        let alias_ident = format_ident!("{ident}{ident_postfix}");
-
-        #[cfg(feature = "warn-platform-struct-usage")]
-        let warning = {
-            let warn_msg = format!("[warn-platform-struct-usage] Platform struct is explicitly used: use '{ident}' instead");
-            quote!(#[deprecated(note = #warn_msg)])
-        };
-        #[cfg(not(feature = "warn-platform-struct-usage"))]
-        let warning = TokenStream2::new();
-
-        quote! {
-            #[doc = #doc_msg]
-            #deprecated_attr
-            #warning
-            #[cfg(target_os = #platform)]
-            #vis type #alias_ident #generics_names = #ident #generics_names;
-        }
-    });
-
     let trait_asserts = if attr.traits.is_empty() {
         TokenStream2::new()
     } else {
-        let cfg_attr = attr.options.convert_to_cfg_attr();
         let traits = attr.traits;
         let generics_where_clause = generics.where_clause.as_ref();
 
-        let separator = if traits.is_empty() {
+        let generics_without_lifetime = generics
+            .params
+            .iter()
+            .filter_map(|generic_param| match *generic_param {
+                GenericParam::Lifetime(_) => None,
+                GenericParam::Type(ref type_param) => {
+                    let &TypeParam {
+                        ref attrs,
+                        ref ident,
+                        ref colon_token,
+                        ref bounds,
+                        eq_token: _,
+                        default: _,
+                    } = type_param;
+                    Some(quote!(#(#attrs)* #ident #colon_token #bounds))
+                }
+                GenericParam::Const(ref const_param) => {
+                    let &ConstParam {
+                        ref attrs,
+                        ref const_token,
+                        ref ident,
+                        ref colon_token,
+                        ref ty,
+                        eq_token: _,
+                        default: _,
+                    } = const_param;
+                    Some(quote!(#(#attrs)* #const_token #ident #colon_token #ty))
+                }
+            })
+            .collect::<Vec<_>>();
+        let generics_without_lifetime = if generics_without_lifetime.is_empty() {
             TokenStream2::new()
         } else {
-            quote!(+)
+            quote!(<#(#generics_without_lifetime),*>)
         };
 
         let generics_usages = if generics.params.is_empty() {
@@ -422,14 +399,13 @@ pub fn sys_struct(attr: TokenStream, item: TokenStream) -> TokenStream {
         quote! {
             #cfg_attr
             const _: () = {
-                fn _assert_traits<T: #(#traits)+* #separator ?Sized>() {}
-                fn _check #generics() #generics_where_clause { _assert_traits::<#ident #generics_usages>(); }
+                fn _assert_traits<T: #(#traits)+* + ?Sized>() {}
+                fn _check #generics_without_lifetime() #generics_where_clause { _assert_traits::<#ident #generics_usages>(); }
             };
         }
     };
 
     quote! {
-        #(#aliases)*
         #cfg_attr
         #item_struct
         #trait_asserts

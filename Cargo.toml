@@ -11,10 +11,6 @@ rust-version = "1.68.0"
 [lib]
 proc-macro = true
 
-[features]
-default = ["warn-platform-struct-usage"]
-warn-platform-struct-usage = []
-
 [dev-dependencies]
 tokio = { version = "1.48.0", default-features = false, features = ["macros", "rt"] }
 

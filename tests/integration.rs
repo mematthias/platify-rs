@@ -157,43 +157,6 @@ async fn test_async() {
 }
 
 // =========================================================================
-// TEST: Struct Aliases
-// Checks if the aliases are created correctly for the CURRENT OS.
-// =========================================================================
-
-#[sys_struct(include(all))]
-struct NativeHandle;
-
-#[test]
-fn test_struct_aliases() {
-    let handle = NativeHandle;
-
-    // This test is tricky because we can only check the alias
-    // for the operating system the test is currently running on.
-
-    #[cfg(target_os = "linux")]
-    {
-        // On Linux, this type alias must exist:
-        #[allow(deprecated)]
-        let _alias: NativeHandleLinux = handle;
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        // On macOS, this type alias must exist:
-        #[allow(deprecated)]
-        let _alias: NativeHandleMacOS = handle;
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        // On Windows, this type alias must exist:
-        #[allow(deprecated)]
-        let _alias: NativeHandleWindows = handle;
-    }
-}
-
-// =========================================================================
 // TEST: Complex Exclusion Logic
 // Checks if the exclusion logic works (compile-time check via cfg).
 // =========================================================================
