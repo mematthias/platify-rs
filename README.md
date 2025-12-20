@@ -25,7 +25,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-platify = "0.2.1"
+platify = "0.3.0"
 ```
 
 Or run:
