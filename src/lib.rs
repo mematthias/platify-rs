@@ -8,29 +8,23 @@
 //!
 //! ## Features
 //!
-//! *   **`#[sys_function]`**: Automatically dispatches method calls to platform-specific implementations (e.g., `fn run()` calls `Self::run_impl()`).
-//! *   **`#[sys_trait_function]`**: Applies platform configuration to trait method definitions.
-//! *   **`#[sys_struct]`**: Generates platform-specific type aliases (e.g., `MyStruct` -> `MyStructLinux`) and optionally enforces trait bounds (e.g., `Send + Sync`) at compile time.
-//! *   **`#[platform_mod]`**: Declares platform-dependent modules backed by OS-specific files, with strict visibility control.
-//! *   **Flexible Logic**: Supports explicit inclusion (`include`) and exclusion (`exclude`) of platforms.
-//! *   **Platform Groups**: Includes helper keywords like `posix` (Linux + macOS) or `all`.
+//! *   **`#[sys_function]`**: Generates a wrapper function that dispatches calls to a platform-specific implementation (e.g., `fn run()` calls `Self::run_impl()`).
+//! *   **`#[sys_trait_function]`**: Simple wrapper to apply platform-specific `#[cfg(...)]` to trait methods.
+//! *   **`#[sys_struct]` / `#[sys_enum]`**: Applies platform gating to types and optionally enforces trait bounds (e.g., `Send + Sync`) at compile time.
+//! *   **`#[platform_mod]`**: Declares platform-dependent modules backed by OS-specific files, providing a unified internal alias.
 //!
 //! ## Supported Keywords
 //!
-//! The following keywords can be used inside `include(...)` and `exclude(...)`:
+//! Inside `include(...)` and `exclude(...)`, you can use:
 //!
-//! *   `linux`
-//! *   `macos`
-//! *   `windows`
-//! *   `posix` (Expands to: `linux`, `macos`)
-//! *   `all` (Expands to: `linux`, `macos`, `windows`)
+//! *   **Platforms**: `linux`, `macos`, `windows`
+//! *   **Groups**: `posix` (Linux + macOS), `all` (Linux, macOS, Windows)
 //!
 //! ## Logic
 //!
-//! The set of allowed platforms is calculated as follows:
-//! 1. Start with the `include` list. If `include` is omitted, it defaults to `all`.
+//! 1. Start with the `include` list (defaults to `all` if omitted).
 //! 2. Remove any platforms specified in the `exclude` list.
-//! 3. Generate the corresponding `#[cfg(any(...))]` attributes.
+//! 3. Generate the resulting `#[cfg(any(target_os = "..."))]` attribute.
 //!
 //! ---
 //!
@@ -38,133 +32,76 @@
 //!
 //! ### 1. Using `#[sys_function]`
 //!
-//! This macro generates a default method that delegates to a `_impl` suffixed method.
+//! This macro generates a method body that delegates to an implementation suffixed with `_impl`.
 //!
 //! ```rust
 //! # use platify::sys_function;
 //! struct SystemManager;
 //!
 //! impl SystemManager {
-//!     /// This method is available on ALL supported platforms (default).
-//!     /// It calls `reboot_impl` internally.
+//!     /// Dispatched on all platforms. Calls `Self::reboot_impl`.
 //!     #[sys_function]
 //!     pub fn reboot(&self) -> Result<(), String>;
 //!
-//!     /// This method is ONLY available on Linux.
+//!     /// Only available on Linux. Calls `Self::update_kernel_impl`.
 //!     #[sys_function(include(linux))]
 //!     pub fn update_kernel(&self);
-//!
-//!     /// This method is available on Linux and macOS, but NOT Windows.
-//!     #[sys_function(exclude(windows))]
-//!     pub fn posix_magic(&self);
 //! }
 //!
-//! // You then implement the specific logic for each platform:
 //! impl SystemManager {
 //!     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-//!     fn reboot_impl(&self) -> Result<(), String> {
-//!         Ok(())
-//!     }
+//!     fn reboot_impl(&self) -> Result<(), String> { Ok(()) }
 //!
 //!     #[cfg(target_os = "linux")]
-//!     fn update_kernel_impl(&self) {
-//!         println!("Updating Linux kernel...");
-//!     }
-//!
-//!     #[cfg(any(target_os = "linux", target_os = "macos"))]
-//!     fn posix_magic_impl(&self) {
-//!         println!("Running POSIX specific logic");
-//!     }
+//!     fn update_kernel_impl(&self) { println!("Updating..."); }
 //! }
 //! ```
 //!
-//! ### 2. Using `#[sys_struct]`
+//! ### 2. Using `#[sys_struct]` and `traits`
 //!
-//! This creates handy type aliases for platform-specific builds and allows verifying trait implementations.
+//! Unlike standard `#[cfg]`, this allows you to verify that your platform-specific type actually implements
+//! specific traits, preventing "missing implementation" errors at a later stage.
 //!
 //! ```rust
 //! # use platify::sys_struct;
-//! // 1. Generates `HandleWindows` alias on Windows.
-//! // 2. Asserts at compile time that `Handle` implements `Send` and `Sync`.
+//! // This struct only exists on Windows and MUST implement Send and Sync.
 //! #[sys_struct(traits(Send, Sync), include(windows))]
-//! pub struct Handle {
+//! pub struct WinHandle {
 //!     handle: u64,
 //! }
-//!
-//! // Generated code roughly looks like:
-//! //
-//! // #[cfg(target_os = "windows")]
-//! // pub type HandleWindows = Handle;
-//! //
-//! // #[cfg(target_os = "windows")]
-//! // const _: () = {
-//! //     fn _assert_traits<T: Send + Sync + ?Sized>() {}
-//! //     fn _check() { _assert_traits::<Handle>(); }
-//! // };
 //! ```
 //!
-//! ### 3. Using `#[sys_trait_function]`
+//! ### 3. Using `#[platform_mod]`
 //!
-//! This allows defining methods in a trait that only exist on specific platforms.
-//!
-//! ```rust
-//! # use platify::sys_trait_function;
-//! trait DesktopEnv {
-//!     /// Only available on Linux
-//!     #[sys_trait_function(include(linux))]
-//!     fn get_wm_name(&self) -> String;
-//! }
-//! ```
-//!
-//! ### 4. Using `#[platform_mod]`
-//!
-//! This creates module aliases backed by specific files (e.g., `linux.rs`, `windows.rs`).
-//!
-//! **Note on Visibility:** The actual platform module (e.g., `mod linux;`) inherits the visibility you declare (`pub`), making it accessible to consumers.
-//!                         However, the generic alias (`mod driver;`) is generated as a **private** use-statement to be used internally.
+//! This automates the pattern of having a `linux.rs` and `windows.rs` and aliasing them to a common name.
 //!
 //! ```rust,ignore
-//! // Assumes existence of `src/linux.rs` and `src/windows.rs`
-//!
+//! // In src/lib.rs
+//! // 1. Generates: #[cfg(target_os = "linux")] pub mod linux;
+//! // 2. Generates: #[cfg(target_os = "linux")] use linux as driver;
 //! #[platform_mod(include(linux, windows))]
 //! pub mod driver;
 //!
-//! // --- Internal Usage (Platform Agnostic) ---
-//! // Inside this file, we use the private alias `driver`.
 //! fn init() {
-//!     let device = driver::Device::new();
+//!     // Use the private alias 'driver' internally regardless of the OS.
+//!     driver::init_hardware();
 //! }
-//! ```
-//!
-//! **External Consumer Usage:**
-//!
-//! ```rust,ignore
-//! // Users of your crate must explicitly choose the platform module.
-//! // 'driver' is not visible here.
-//! #[cfg(target_os = "linux")]
-//! use my_crate::linux::Device;
 //! ```
 
 use proc_macro::TokenStream;
-use proc_macro2::{Span as Span2, TokenStream as TokenStream2};
+use proc_macro2::{Ident as Ident2, Span as Span2, TokenStream as TokenStream2};
 use quote::{format_ident, quote, ToTokens as _};
+use std::borrow::Cow;
 use std::collections::{BTreeSet, HashSet};
 use syn::parse::{Parse, ParseStream};
 use syn::spanned::Spanned as _;
 use syn::{
     parenthesized, parse, parse_macro_input, token, Attribute, ConstParam, Error, FnArg,
-    ForeignItemFn, GenericParam, ItemFn, ItemMod, ItemStruct, ItemUse, Pat, PatType, ReturnType,
-    Signature, TraitItemFn, TypeParam, UseTree, Visibility,
+    ForeignItemFn, GenericParam, Generics, ItemEnum, ItemFn, ItemMod, ItemStruct, ItemUse, Pat,
+    PatType, ReturnType, Signature, TraitItemFn, TypeParam, UseTree, Visibility,
 };
 
 /// Applies platform configuration to trait method definitions.
-///
-/// Use this inside a `trait` definition to limit methods to specific platforms.
-///
-/// # Options
-///
-/// - `include(...)`: Whitelist of platforms. Options: `linux`, `macos`, `windows`, `all`, `posix`.
-/// - `exclude(...)`: Blacklist of platforms. Removes them from the included set.
 #[proc_macro_attribute]
 pub fn sys_trait_function(attr: TokenStream, item: TokenStream) -> TokenStream {
     let attr = parse_macro_input!(attr as AttrOptions);
@@ -179,47 +116,29 @@ pub fn sys_trait_function(attr: TokenStream, item: TokenStream) -> TokenStream {
     .into()
 }
 
-/// Generates a platform-dependent method implementation.
+/// Generates a platform-dependent method implementation dispatcher.
 ///
-/// This attribute macro acts as a dispatcher. It applies `#[cfg(...)]` attributes based on the
-/// provided configuration and generates a default body that calls a platform-specific implementation
-/// (e.g., `fn foo()` calls `Self::foo_impl()`).
+/// It transforms a signature like `fn foo(&self)` into a body `{ Self::foo_impl(self) }`.
+/// It supports `async`, `unsafe`, and generic parameters.
 ///
-/// # Options
-///
-/// - `include(...)`: Whitelist of platforms. Options: `linux`, `macos`, `windows`, `all`, `posix`.
-/// - `exclude(...)`: Blacklist of platforms. Removes them from the included set.
-///
-/// If `include` is omitted, it defaults to `all` (minus any exclusions).
-///
-/// # Logic
-///
-/// 1. Calculates the set of allowed platforms: `(include OR all) - exclude`.
-/// 2. Applies `#[cfg(any(target_os = "..."))]` to the method.
-/// 3. Generates a default implementation: `fn foo(&self) { Self::foo_impl(self) }`.
-///
-/// # Requirements
-///
-/// The implementing type must define the corresponding `_impl` method.
+/// **Note:** Complex patterns in arguments (e.g., `fn move_point((x, y): (i32, i32))`) are not
+/// supported. Use simple identifiers for arguments.
 #[proc_macro_attribute]
 pub fn sys_function(attr: TokenStream, item: TokenStream) -> TokenStream {
     let attr = parse_macro_input!(attr as AttrOptions);
     let cfg_attr = attr.convert_to_cfg_attr();
 
-    let struct_info = match parse::<ForeignItemFn>(item.clone()) {
-        Ok(foreign_item_fn) => foreign_item_fn,
-        Err(_) => {
-            return match parse::<ItemFn>(item) {
-                Ok(item_fn) => {
-                    quote! {
-                        #cfg_attr
-                        #item_fn
-                    }
+    let Ok(struct_info) = parse::<ForeignItemFn>(item.clone()) else {
+        return match parse::<ItemFn>(item) {
+            Ok(item_fn) => {
+                quote! {
+                    #cfg_attr
+                    #item_fn
                 }
-                Err(err) => err.to_compile_error(),
             }
-            .into()
+            Err(err) => err.to_compile_error(),
         }
+        .into();
     };
 
     let ForeignItemFn {
@@ -229,7 +148,7 @@ pub fn sys_function(attr: TokenStream, item: TokenStream) -> TokenStream {
         semi_token: _,
     } = struct_info;
 
-    let &Signature {
+    let Signature {
         constness: _,
         ref asyncness,
         ref unsafety,
@@ -241,7 +160,9 @@ pub fn sys_function(attr: TokenStream, item: TokenStream) -> TokenStream {
         ref inputs,
         ref variadic,
         ref output,
-    } = &sig;
+    } = sig;
+
+    let has_deprecated = attrs.iter().any(|attr| attr.path().is_ident("deprecated"));
 
     let sys_ident = format_ident!("{ident}_impl");
     let asyncness = asyncness
@@ -255,16 +176,16 @@ pub fn sys_function(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let mut param_errors = TokenStream2::new();
     let input_names = inputs.iter().filter_map(|fn_arg| match *fn_arg {
-		FnArg::Receiver(_) => Some(quote!(self)),
-		FnArg::Typed(PatType { ref pat, .. }) => match **pat {
-			Pat::Ident(ref pat_ident) => Some(pat_ident.ident.to_token_stream()),
+        FnArg::Receiver(_) => Some(quote!(self)),
+        FnArg::Typed(PatType { ref pat, .. }) => match **pat {
+            Pat::Ident(ref pat_ident) => Some(pat_ident.ident.to_token_stream()),
             ref other => {
-				const MSG: &str = "Complex patterns in arguments are not supported by #[sys_function]: give the argument a name";
-				param_errors.extend(Error::new(other.span(), MSG).to_compile_error());
-				None
-			},
-		},
-	});
+                const MSG: &str = "Complex patterns in arguments are not supported by #[sys_function]: give the argument a name";
+                param_errors.extend(Error::new(other.span(), MSG).to_compile_error());
+                None
+            },
+        },
+    });
 
     let generic_names = generics
         .params
@@ -288,10 +209,17 @@ pub fn sys_function(attr: TokenStream, item: TokenStream) -> TokenStream {
         body = quote!(unsafe { #body });
     }
 
+    let expect_deprecated = if has_deprecated {
+        quote!(#[expect(deprecated, reason = "Deprecated due to code generation constraints")])
+    } else {
+        TokenStream2::new()
+    };
+
     let result = quote! {
         #cfg_attr
         #(#attrs)*
         #vis #sig {
+            #expect_deprecated
             #body
         }
     };
@@ -311,25 +239,45 @@ pub fn sys_function(attr: TokenStream, item: TokenStream) -> TokenStream {
     .into()
 }
 
-/// Generates platform-specific type aliases for a struct.
+/// Applies platform config to an enum and verifies trait bounds at compile time.
 ///
-/// It preserves the original struct definition and adds type aliases that are only available
-/// on specific platforms.
+/// Use `traits(Trait1, Trait2)` to ensure the type satisfies these bounds on the target platform.
+#[proc_macro_attribute]
+pub fn sys_enum(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let attr = parse_macro_input!(attr as ParsedAttrOptions);
+    let cfg_attr = attr.options.convert_to_cfg_attr();
+
+    let item_enum = parse_macro_input!(item as ItemEnum);
+    let ItemEnum {
+        attrs: _,
+        vis: _,
+        enum_token: _,
+        ref ident,
+        ref generics,
+        brace_token: _,
+        variants: _,
+    } = item_enum;
+
+    let trait_asserts = generate_assert_check(&attr, ident, generics, Some(&cfg_attr));
+
+    quote! {
+        #cfg_attr
+        #item_enum
+        #trait_asserts
+    }
+    .into()
+}
+
+/// Applies platform config to a struct and verifies trait bounds at compile time.
 ///
-/// # Options
-///
-/// - `traits(...)`: Comma-separated list of traits (e.g., `Send, Sync`) to assert at compile time.
-/// - `include(...)`: Whitelist of platforms.
-/// - `exclude(...)`: Blacklist of platforms.
-///
-/// (See [`sys_function`] for more details on include/exclude logic).
+/// Use `traits(Trait1, Trait2)` to ensure the type satisfies these bounds on the target platform.
 #[proc_macro_attribute]
 pub fn sys_struct(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let attr = parse_macro_input!(attr as StructOptions);
+    let attr = parse_macro_input!(attr as ParsedAttrOptions);
     let cfg_attr = attr.options.convert_to_cfg_attr();
 
     let item_struct = parse_macro_input!(item as ItemStruct);
-    let &ItemStruct {
+    let ItemStruct {
         attrs: _,
         vis: _,
         struct_token: _,
@@ -337,73 +285,9 @@ pub fn sys_struct(attr: TokenStream, item: TokenStream) -> TokenStream {
         ref generics,
         fields: _,
         semi_token: _,
-    } = &item_struct;
+    } = item_struct;
 
-    let trait_asserts = if attr.traits.is_empty() {
-        TokenStream2::new()
-    } else {
-        let traits = attr.traits;
-        let generics_where_clause = generics.where_clause.as_ref();
-
-        let generics_without_lifetime = generics
-            .params
-            .iter()
-            .filter_map(|generic_param| match *generic_param {
-                GenericParam::Lifetime(_) => None,
-                GenericParam::Type(ref type_param) => {
-                    let &TypeParam {
-                        ref attrs,
-                        ref ident,
-                        ref colon_token,
-                        ref bounds,
-                        eq_token: _,
-                        default: _,
-                    } = type_param;
-                    Some(quote!(#(#attrs)* #ident #colon_token #bounds))
-                }
-                GenericParam::Const(ref const_param) => {
-                    let &ConstParam {
-                        ref attrs,
-                        ref const_token,
-                        ref ident,
-                        ref colon_token,
-                        ref ty,
-                        eq_token: _,
-                        default: _,
-                    } = const_param;
-                    Some(quote!(#(#attrs)* #const_token #ident #colon_token #ty))
-                }
-            })
-            .collect::<Vec<_>>();
-        let generics_without_lifetime = if generics_without_lifetime.is_empty() {
-            TokenStream2::new()
-        } else {
-            quote!(<#(#generics_without_lifetime),*>)
-        };
-
-        let generics_usages = if generics.params.is_empty() {
-            TokenStream2::new()
-        } else {
-            let generics_usages =
-                generics
-                    .params
-                    .iter()
-                    .map(|generic_param| match *generic_param {
-                        GenericParam::Lifetime(_) => quote!('_),
-                        GenericParam::Type(ref type_param) => type_param.ident.to_token_stream(),
-                        GenericParam::Const(ref const_param) => const_param.ident.to_token_stream(),
-                    });
-            quote!(<#(#generics_usages),*>)
-        };
-
-        quote! {
-            #cfg_attr
-            const _: () = {
-                fn _assert_traits<T: #(#traits)+* + ?Sized>() {}
-                fn _check #generics_without_lifetime() #generics_where_clause { _assert_traits::<#ident #generics_usages>(); }
-            };
-        }
-    };
+    let trait_asserts = generate_assert_check(&attr, ident, generics, Some(&cfg_attr));
 
     quote! {
         #cfg_attr
@@ -413,27 +297,14 @@ pub fn sys_struct(attr: TokenStream, item: TokenStream) -> TokenStream {
     .into()
 }
 
-/// Declares a platform-dependent module backed by OS-specific source files.
+/// Declares platform-dependent modules with a unified internal alias.
 ///
-/// This attribute simplifies the management of platform-specific code modules. Instead of manually
-/// writing multiple `#[cfg(...)] mod ...;` blocks, you define a single logical module name.
-/// The macro expects corresponding files (e.g., `linux.rs`, `windows.rs`) to exist in the same directory.
+/// For each platform, it generates:
+/// 1. A module declaration (e.g., `pub mod linux;`) using the platform name.
+/// 2. A private `use` alias (e.g., `use linux as my_mod;`) using the identifier you provided.
 ///
-/// # Options
-///
-/// Same as [`sys_function`]: `include(...)` and `exclude(...)` determine which platform modules are generated.
-///
-/// # Visibility Behavior
-///
-/// This macro enforces a strict separation between **internal convenience** and **external access**:
-///
-/// 1. **The Module (External):** The actual platform module (e.g., `mod linux;`) **inherits** the visibility you declared.
-///    If you write `pub mod driver;`, the generated `mod linux;` will be public.
-/// 2. **The Alias (Internal):** The logical name you specified (e.g., `driver`) is generated as a **private use-alias**.
-///
-/// **Why?** This ensures that external consumers of your crate must be explicit about the platform they are accessing
-/// (e.g., `my_crate::linux::MyStruct`), while allowing you to use the generic name (e.g., `driver::MyStruct`)
-/// conveniently within your own code.
+/// This allows external users to see the platform-specific modules, while your internal
+/// code uses the generic alias.
 #[proc_macro_attribute]
 pub fn platform_mod(attr: TokenStream, item: TokenStream) -> TokenStream {
     struct DModInfo {
@@ -463,9 +334,9 @@ pub fn platform_mod(attr: TokenStream, item: TokenStream) -> TokenStream {
 
             if let Some(leading_colon) = leading_colon {
                 return Error::new(
-				    leading_colon.span(),
-				    "#[platform_mod] does not support absolute paths (leading `::`). Please use a local identifier"
-			    ).to_compile_error().into();
+                    leading_colon.span(),
+                    "#[platform_mod] does not support absolute paths (leading `::`). Please use a local identifier"
+                ).to_compile_error().into();
             }
 
             let use_ident = match tree {
@@ -475,9 +346,9 @@ pub fn platform_mod(attr: TokenStream, item: TokenStream) -> TokenStream {
                 | UseTree::Glob(_)
                 | UseTree::Group(_)) => {
                     return Error::new(
-					    other.span(),
-					    "#[platform_mod] on `use` statements only supports simple direct aliases (e.g., `use name;`)"
-				    ).to_compile_error().into();
+                        other.span(),
+                        "#[platform_mod] on `use` statements only supports simple direct aliases (e.g., `use name;`)"
+                    ).to_compile_error().into();
                 }
             };
 
@@ -512,19 +383,19 @@ pub fn platform_mod(attr: TokenStream, item: TokenStream) -> TokenStream {
 
                 if content.is_some() {
                     return Error::new(
-					    item_mod_span,
-					    "#[platform_mod] does not support inline modules with a body `{ ... }`.\n\
-					    Please use a declaration like `mod name;` to allow swapping the file based on the platform."
-				    ).to_compile_error().into();
+                        item_mod_span,
+                        "#[platform_mod] does not support inline modules with a body `{ ... }`.\n\
+                        Please use a declaration like `mod name;` to allow swapping the file based on the platform."
+                    ).to_compile_error().into();
                 }
 
                 DModInfo { attrs, vis, ident }
             }
             Err(_) => {
                 return Error::new(
-				    Span2::call_site(),
-				    "#[platform_mod] expected a `mod declaration` (e.g., `mod foo;`) or a `use statement` (e.g., `use foo;`)"
-			    ).to_compile_error().into();
+                    Span2::call_site(),
+                    "#[platform_mod] expected a `mod declaration` (e.g., `mod foo;`) or a `use statement` (e.g., `use foo;`)"
+                ).to_compile_error().into();
             }
         },
     };
@@ -548,6 +419,84 @@ pub fn platform_mod(attr: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 // ##################################### IMPLEMENTATION #####################################
+
+#[must_use]
+fn generate_assert_check(
+    options: &ParsedAttrOptions,
+    ident: &Ident2,
+    generics: &Generics,
+    cfg_attr: Option<&TokenStream2>,
+) -> TokenStream2 {
+    if options.traits.is_empty() {
+        return TokenStream2::new();
+    }
+
+    let cfg_attr = cfg_attr.map_or_else(
+        || Cow::Owned(options.options.convert_to_cfg_attr()),
+        Cow::Borrowed,
+    );
+
+    let traits = &options.traits;
+    let generics_where_clause = generics.where_clause.as_ref();
+
+    let generics_without_lifetime = generics
+        .params
+        .iter()
+        .filter_map(|generic_param| match *generic_param {
+            GenericParam::Lifetime(_) => None,
+            GenericParam::Type(ref type_param) => {
+                let TypeParam {
+                    ref attrs,
+                    ref ident,
+                    ref colon_token,
+                    ref bounds,
+                    eq_token: _,
+                    default: _,
+                } = type_param;
+                Some(quote!(#(#attrs)* #ident #colon_token #bounds))
+            }
+            GenericParam::Const(ref const_param) => {
+                let ConstParam {
+                    ref attrs,
+                    ref const_token,
+                    ref ident,
+                    ref colon_token,
+                    ref ty,
+                    eq_token: _,
+                    default: _,
+                } = const_param;
+                Some(quote!(#(#attrs)* #const_token #ident #colon_token #ty))
+            }
+        })
+        .collect::<Vec<_>>();
+    let generics_without_lifetime = if generics_without_lifetime.is_empty() {
+        TokenStream2::new()
+    } else {
+        quote!(<#(#generics_without_lifetime),*>)
+    };
+
+    let generics_usages = if generics.params.is_empty() {
+        TokenStream2::new()
+    } else {
+        let generics_usages = generics
+            .params
+            .iter()
+            .map(|generic_param| match *generic_param {
+                GenericParam::Lifetime(_) => quote!('_),
+                GenericParam::Type(ref type_param) => type_param.ident.to_token_stream(),
+                GenericParam::Const(ref const_param) => const_param.ident.to_token_stream(),
+            });
+        quote!(<#(#generics_usages),*>)
+    };
+
+    quote! {
+        #cfg_attr
+        const _: () = {
+            fn assert_traits<T: #(#traits)+* + ?Sized>() {}
+            fn _check #generics_without_lifetime() #generics_where_clause { assert_traits::<#ident #generics_usages>(); }
+        };
+    }
+}
 
 mod keywords {
     use syn::custom_keyword;
@@ -646,10 +595,10 @@ impl AttrOptions {
 
         let error = if allowed_set.is_empty() {
             Error::new(
-				self.span,
-				"Configuration excludes all platforms: 'include' and 'exclude' cancel each other out",
-			)
-				.to_compile_error()
+                self.span,
+                "Configuration excludes all platforms: 'include' and 'exclude' cancel each other out",
+            )
+            .to_compile_error()
         } else {
             TokenStream2::new()
         };
@@ -669,26 +618,26 @@ impl AttrOptions {
 impl Parse for AttrOptions {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
         parse_attributes(input, false).map(|options| {
-            let StructOptions { options, traits } = options;
+            let ParsedAttrOptions { options, traits } = options;
             assert_eq!(traits.len(), 0, "Implementation error");
             options
         })
     }
 }
 
-struct StructOptions {
+struct ParsedAttrOptions {
     options: AttrOptions,
     traits: Vec<syn::Path>,
 }
 
-impl Parse for StructOptions {
+impl Parse for ParsedAttrOptions {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
         parse_attributes(input, true)
     }
 }
 
-fn parse_attributes(input: ParseStream<'_>, allow_traits: bool) -> syn::Result<StructOptions> {
-    let mut result = StructOptions {
+fn parse_attributes(input: ParseStream<'_>, allow_traits: bool) -> syn::Result<ParsedAttrOptions> {
+    let mut result = ParsedAttrOptions {
         options: AttrOptions {
             span: input.span(),
             exclude: HashSet::default(),

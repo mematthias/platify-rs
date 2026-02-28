@@ -1,20 +1,22 @@
-﻿[package]
+[package]
 name = "platify"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 license = "MIT"
 description = "Streamline cross-platform Rust development with declarative attribute macros."
 repository = "https://github.com/mematthias/platify-rs"
 readme = true
 rust-version = "1.68.0"
+keywords = ["cross-platform", "cfg", "boilerplate", "attributes", "os"]
+categories = ["development-tools", "os", "rust-patterns"]
 
 [lib]
 proc-macro = true
 
 [dev-dependencies]
-tokio = { version = "1.48.0", default-features = false, features = ["macros", "rt"] }
+tokio = { version = "^1.38", default-features = false, features = ["macros", "rt"] }
 
 [dependencies]
-proc-macro2 = { version = "1.0.103", default-features = false, features = [] }
-quote = { version = "1.0.42", default-features = false, features = [] }
-syn = { version = "2.0.111", default-features = false, features = ["full", "parsing", "printing", "proc-macro"] }
+proc-macro2 = { version = "^1.0", default-features = false, features = [] }
+quote = { version = "^1.0", default-features = false, features = [] }
+syn = { version = "^2.0", default-features = false, features = ["full", "parsing", "printing", "proc-macro"] }
